@@ -75,15 +75,23 @@ function compareArray(a1: number[], a2: number[]): boolean {
 }
 
 /**
- * Get layout-independent key code from keyboard event
- * This makes hotkeys work regardless of keyboard layout (Russian, German, etc.)
- * Uses event.code (physical key) instead of keyCode (character) for letter keys
+ * Get a normalized key code from keyboard event.
+ *
+ * For Latin letters, prefer `event.key` so alternate Latin layouts such as
+ * Dvorak/Colemak match the typed character.
+ *
+ * For non-Latin layouts, fall back to `event.code` for KeyA-KeyZ so bindings
+ * like `ctrl+m` still work on Cyrillic/Greek keyboards.
  */
 function getLayoutIndependentKeyCode(event: KeyboardEvent): number {
   let key = event.keyCode || event.which || event.charCode;
 
+  if (event.key && /^[a-z]$/i.test(event.key)) {
+    return event.key.toUpperCase().charCodeAt(0);
+  }
+
   // Convert physical key code (KeyA-KeyZ) to corresponding ASCII code (65-90)
-  // This makes 'ctrl+a' work on any keyboard layout
+  // when the typed character is not a Latin letter.
   if (event.code && /^Key[A-Z]$/.test(event.code)) {
     key = event.code.charCodeAt(3); // "KeyA"[3] = "A" -> 65
   }

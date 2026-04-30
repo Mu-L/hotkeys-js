@@ -1,12 +1,47 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const puppeteer = require('puppeteer');
 const path = require('path');
+const fs = require('fs');
 
 let browser;
 let page;
 
+function resolveChromeExecutablePath() {
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    return process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+
+  if (process.platform === 'darwin') {
+    const macCandidates = [
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    ];
+    const found = macCandidates.find((candidate) => fs.existsSync(candidate));
+    if (found) return found;
+  }
+
+  if (process.platform === 'linux') {
+    const linuxCandidates = [
+      '/usr/bin/google-chrome-stable',
+      '/usr/bin/google-chrome',
+      '/usr/bin/chromium-browser',
+      '/usr/bin/chromium',
+    ];
+    const found = linuxCandidates.find((candidate) => fs.existsSync(candidate));
+    if (found) return found;
+  }
+
+  return undefined;
+}
+
 beforeAll(async () => {
-  browser = await puppeteer.launch({ args: ['--no-sandbox'] });
+  const executablePath = resolveChromeExecutablePath();
+  browser = await puppeteer.launch({
+    executablePath,
+    headless: true,
+    timeout: 60000,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+  });
   page = await browser.newPage();
 
   // Enable coverage collection
@@ -514,9 +549,66 @@ describe('\n   Hotkeys.js Test Case\n', () => {
     expect(result.downKeysAfterRelease).toEqual([]);
   });
 
+  test('Latin alternate layouts should match typed letters', async () => {
+    const result = await page.evaluate(async () => {
+      const results = {
+        iTriggered: false,
+        cTriggered: false,
+        pressedKeysDuringI: [],
+      };
+
+      window.hotkeys('i', () => {
+        results.iTriggered = true;
+        results.pressedKeysDuringI = window.hotkeys.getPressedKeyCodes();
+      });
+
+      window.hotkeys('c', () => {
+        results.cTriggered = true;
+      });
+
+      await new Promise((resolve) => {
+        const keyDown = new KeyboardEvent('keydown', {
+          key: 'i',
+          code: 'KeyC',
+          keyCode: 73,
+          which: 73,
+          bubbles: true,
+          cancelable: true,
+        });
+        document.body.dispatchEvent(keyDown);
+
+        setTimeout(() => {
+          const keyUp = new KeyboardEvent('keyup', {
+            key: 'i',
+            code: 'KeyC',
+            keyCode: 73,
+            which: 73,
+            bubbles: true,
+            cancelable: true,
+          });
+          document.body.dispatchEvent(keyUp);
+          resolve();
+        }, 20);
+      });
+
+      window.hotkeys.unbind('i');
+      window.hotkeys.unbind('c');
+
+      return results;
+    });
+
+    expect(result.iTriggered).toBeTruthy();
+    expect(result.cTriggered).toBeFalsy();
+    expect(result.pressedKeysDuringI).toEqual(expect.arrayContaining([73]));
+  });
+
   afterAll(async () => {
+    if (!browser) {
+      return;
+    }
+
     // Collect coverage data
-    const jsCoverage = await page.coverage.stopJSCoverage();
+    const jsCoverage = page ? await page.coverage.stopJSCoverage() : [];
     
     // Convert to Istanbul/Jest compatible coverage format
     global.__coverage__ = global.__coverage__ || {};
@@ -546,7 +638,6 @@ describe('\n   Hotkeys.js Test Case\n', () => {
     console.log(`JS Coverage: ${coverage.toFixed(2)}%`);
     
     // Save coverage metrics to file for CI/Actions usage
-    const fs = require('fs');
     const coverageDir = path.join(process.cwd(), 'coverage');
     if (!fs.existsSync(coverageDir)) {
       fs.mkdirSync(coverageDir, { recursive: true });
